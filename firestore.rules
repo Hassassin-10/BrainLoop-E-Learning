@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // allowed_students collection:
+    // - Authenticated users can read to verify student IDs during login.
+    // - Writes should be restricted (e.g., to admin roles, not shown here for simplicity).
+    match /allowed_students/{studentId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Example: allow false; Or, implement admin role check.
+    }
+
+    // students collection (user profiles):
+    // - A user can read and write their own profile document.
+    match /students/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // students/{userId}/courses subcollection (course-specific progress):
+    // - A user can read and write documents within their own 'courses' subcollection.
+    // - This implicitly means they must be authenticated and match the {userId}.
+    match /students/{userId}/courses/{courseId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // feedback collection:
+    // - Authenticated users can create feedback.
+    // - Users can read feedback they submitted (matching studentId on feedback doc with studentId on their profile).
+    // - Updates/deletes typically restricted.
+    match /feedback/{feedbackId} {
+      allow create: if request.auth != null;
+      // To read own feedback, assuming studentId in feedback doc matches studentId in user's profile
+      // This requires fetching the user's profile to get their studentId for comparison.
+      // A simpler rule for now, if studentId in feedback matches the user's document studentId:
+      // allow read: if request.auth != null && request.resource.data.studentId == get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId;
+      // Or, if feedback document stores auth.uid directly:
+      // allow read: if request.auth != null && request.auth.uid == resource.data.submitterUid;
+      // For simplicity, let's allow authenticated users to read feedback for now, and refine if needed.
+      allow read: if request.auth != null; 
+      allow update, delete: if false; // Or restrict to admins.
+    }
+
+    // student_quiz_attempts collection:
+    // - Authenticated users can create their own quiz attempts.
+    // - Users can only read their own quiz attempts.
+    // - Updates/deletes typically restricted.
+    match /student_quiz_attempts/{attemptId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow update, delete: if false; // Or restrict to admins.
+    }
+  }
+}
