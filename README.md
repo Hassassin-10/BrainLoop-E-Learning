@@ -51,7 +51,6 @@
 - **Frontend**: Next.js, Tailwind CSS, TypeScript
 - **Backend**: Firebase (Firestore, Realtime DB, Auth)
 - **3D Graphics**: [Spline](https://spline.design)
-- **Payment Gateway**: Stripe (Test Mode)
 - **Authentication**: Firebase Auth + custom student ID logic
 
 ---
