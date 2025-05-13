@@ -1,16 +1,19 @@
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
-import './globals.css';
-import { Toaster } from '@/components/ui/toaster';
-import { AuthProvider } from '@/contexts/AuthContext'; 
-import { ThemeProvider } from '@/components/theme-provider';
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
+import { Toaster } from "@/components/ui/toaster";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { ThemeProvider } from "@/components/theme-provider";
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: 'BrainLoop - AI-Powered Personalized Learning',
+  title: "BrainLoop - AI-Powered Personalized Learning",
   description:
-    'Adaptive learning experiences tailored to individual student needs, featuring NLP-powered Q&A, custom quizzes, and LMS integration.',
+    "Adaptive learning experiences tailored to individual student needs, featuring NLP-powered Q&A, custom quizzes, and LMS integration.",
+  icons: {
+    icon: "/icon.png",
+  },
 };
 
 export default function RootLayout({

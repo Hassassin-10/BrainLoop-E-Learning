@@ -1,11 +1,10 @@
-
 "use client";
 
 import dynamic from "next/dynamic";
-import type { SplineEvent } from "@splinetool/react-spline";
+import Spline, { SplineEvent } from "@splinetool/react-spline";
 import type { Application } from "@splinetool/runtime";
 
-const Spline = dynamic(() => import("@splinetool/react-spline"), {
+const DynamicSpline = dynamic(() => Promise.resolve(Spline), {
   ssr: false,
   loading: () => (
     <div className="absolute inset-0 flex items-center justify-center bg-secondary/50">
@@ -15,16 +14,16 @@ const Spline = dynamic(() => import("@splinetool/react-spline"), {
 });
 
 export function SplineBackground() {
-  const handleMouseDown = (e: SplineEvent) => {
+  const onMouseDown = (e: SplineEvent) => {
     console.log("Clicked:", e);
   };
 
-  const handleMouseMove = (e: SplineEvent) => {
+  const onMouseMove = (e: SplineEvent) => {
     // Accessing e.point might be specific to how SplineEvent is structured.
     // If e.point is not directly available, you might need to inspect the event object (e.g., e.target.point).
     // For now, logging the event or a specific property if known.
     // console.log("Mouse move:", e.point); // e.point might not be standard, using e.name or similar if available.
-    if (e.target && 'name' in e.target) {
+    if (e.target && "name" in e.target) {
       console.log("Mouse move over object:", e.target.name);
     } else {
       console.log("Mouse move:", e);
@@ -41,15 +40,16 @@ export function SplineBackground() {
   };
 
   return (
-    <div className="absolute inset-0 w-full h-full"> {/* Removed z-[-1] to allow interactions */}
-      <Spline
+    <div className="absolute inset-0 w-full h-full">
+      {" "}
+      {/* Removed z-[-1] to allow interactions */}
+      <DynamicSpline
         scene="https://prod.spline.design/2bQwIVHcPknQyiuy/scene.splinecode"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
         onLoad={onLoad}
         style={{ width: "100%", height: "100%" }}
       />
     </div>
   );
 }
-
