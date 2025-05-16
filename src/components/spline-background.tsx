@@ -1,9 +1,9 @@
 "use client";
 
-import dynamic from "next/dynamic";
+import { Spline } from "@splinetool/react-spline";
 import type { Application } from "@splinetool/runtime";
 
-// ✅ Define a basic SplineEvent type to avoid the import error
+// Optional: define or import this if needed more strictly
 type SplineEvent = {
   target: {
     name?: string;
@@ -11,15 +11,6 @@ type SplineEvent = {
   };
   [key: string]: any;
 };
-
-const Spline = dynamic(() => import("@splinetool/react-spline"), {
-  ssr: false,
-  loading: () => (
-    <div className="absolute inset-0 flex items-center justify-center bg-secondary/50">
-      <div className="animate-pulse text-primary">Loading 3D Scene...</div>
-    </div>
-  ),
-});
 
 export function SplineBackground() {
   const handleMouseDown = (e: SplineEvent) => {
@@ -35,10 +26,7 @@ export function SplineBackground() {
   };
 
   const onLoad = (splineApp: Application) => {
-    if (splineApp) {
-      console.log("Spline loaded");
-      // Optional: add camera/animation control here
-    }
+    console.log("Spline loaded", splineApp);
   };
 
   return (
