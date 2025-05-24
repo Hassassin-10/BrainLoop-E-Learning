@@ -2,6 +2,7 @@
 
 **BrainLoop** is an interactive, AI-powered educational platform that integrates video-based learning, AR labs, quizzes, and a smart chatbot to enhance the personalized learning experience for students.
 
+# Demo : https://drive.google.com/file/d/17DxomeztE7AmMcSUgfHYvDkH7AqKKFvt/view?usp=sharing
 ---
 
 ## 🚀 Features
