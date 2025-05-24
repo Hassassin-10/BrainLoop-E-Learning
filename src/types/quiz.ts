@@ -1,3 +1,4 @@
+
 import type { Timestamp } from 'firebase/firestore';
 
 export interface QuizQuestionOption {
@@ -35,6 +36,7 @@ export interface QuizAttempt {
   quizId: string;
   quizTitle: string; // Denormalized for easier display
   userId: string; // Firebase Auth UID or studentId
+  studentName?: string; // Denormalized student name for leaderboard
   answers: UserAnswer[];
   score: number; // Percentage or raw score
   totalQuestions: number;

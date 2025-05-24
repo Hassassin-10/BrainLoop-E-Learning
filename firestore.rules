@@ -1,54 +1,108 @@
+
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // allowed_students collection:
-    // - Authenticated users can read to verify student IDs during login.
-    // - Writes should be restricted (e.g., to admin roles, not shown here for simplicity).
-    match /allowed_students/{studentId} {
-      allow read: if request.auth != null;
-      allow write: if false; // Example: allow false; Or, implement admin role check.
-    }
+    // Allow public read access for general app data if needed (e.g. courses list - but not specific user data)
+    // Example:
+    // match /courses/{courseId} {
+    //   allow read: if true;
+    //   allow write: if request.auth != null && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId == '8918'; // Admin only
+    // }
 
-    // students collection (user profiles):
-    // - A user can read and write their own profile document.
+    // Student profiles
     match /students/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, update, create: if request.auth != null && request.auth.uid == userId;
+      // allow create: if request.auth != null; // Allow creation if user is authenticated, verification of studentId happens in app logic
+      // Progress subcollection
+      match /progress/{moduleId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      // Courses enrolled subcollection
+      match /coursesEnrolled/{courseId} {
+         allow read, create, delete: if request.auth != null && request.auth.uid == userId;
+      }
+       // Learning stats subcollection
+      match /learningStats/{statId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    
+    // Allowed students list (for ID verification during login - typically admin-managed or pre-populated)
+    match /allowed_students/{studentDocId} {
+      allow read: if request.auth != null; // Authenticated users can read (needed for login flow)
+      // allow write: if request.auth != null && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId == '8918'; // Admin only for writes
+      allow write: if false; // Typically managed via Admin SDK or console
     }
 
-    // students/{userId}/courses subcollection (course-specific progress):
-    // - A user can read and write documents within their own 'courses' subcollection.
-    // - This implicitly means they must be authenticated and match the {userId}.
-    match /students/{userId}/courses/{courseId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-
-    // feedback collection:
-    // - Authenticated users can create feedback.
-    // - Users can read feedback they submitted (matching studentId on feedback doc with studentId on their profile).
-    // - Updates/deletes typically restricted.
+    // Feedback
     match /feedback/{feedbackId} {
-      allow create: if request.auth != null;
-      // To read own feedback, assuming studentId in feedback doc matches studentId in user's profile
-      // This requires fetching the user's profile to get their studentId for comparison.
-      // A simpler rule for now, if studentId in feedback matches the user's document studentId:
-      // allow read: if request.auth != null && request.resource.data.studentId == get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId;
-      // Or, if feedback document stores auth.uid directly:
-      // allow read: if request.auth != null && request.auth.uid == resource.data.submitterUid;
-      // For simplicity, let's allow authenticated users to read feedback for now, and refine if needed.
-      allow read: if request.auth != null; 
-      allow update, delete: if false; // Or restrict to admins.
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.studentId;
+      allow read: if request.auth != null && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId == '8918'; // Admin only for reading all feedback
     }
 
-    // student_quiz_attempts collection:
-    // - Authenticated users can create their own quiz attempts.
-    // - Users can only read their own quiz attempts.
-    // - Updates/deletes typically restricted.
+    // Student Quiz Attempts
     match /student_quiz_attempts/{attemptId} {
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
-      allow update, delete: if false; // Or restrict to admins.
+        allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+        allow read: if request.auth != null && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId in ["8918", "STRITH23170"]);
+    }
+    
+    // Course-specific doubts
+    match /courses/{courseId}/modules/{moduleId}/doubts/{doubtId} {
+      allow read: if request.auth != null; // All authenticated users can read doubts
+      allow create: if request.auth != null; // Authenticated users can create doubts
+      allow update: if request.auth != null && 
+                      (request.auth.uid == resource.data.senderId || // Sender can update (e.g. edit, pin their own)
+                       get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId in ["8918", "STRITH23170"]); // Admins can update (e.g. pin any)
+      // Deletion rules might be more restrictive, e.g., only sender or admin.
+      // allow delete: if request.auth != null && (request.auth.uid == resource.data.senderId || get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId == '8918');
+    }
+
+    // Live Meetings
+    match /liveMeetings/{roomId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId in ["8918", "STRITH23170"]; // Only admins can create
+      allow update: if request.auth != null && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId in ["8918", "STRITH23170"];// Only admins can update (e.g. end meeting)
+      
+      match /presence/{participantId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null && request.auth.uid == participantId; // User can mark their own presence
+        allow update: if request.auth != null && request.auth.uid == participantId; // User can update their own presence (e.g. leave)
+      }
+      
+      match /chat/{messageId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null; // Any authenticated user in the meeting can send messages
+        allow update(pin): if request.auth != null && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId in ["8918", "STRITH23170"]; // Admins can pin
+      }
+
+      match /summary/{summaryId} {
+         allow read: if request.auth != null;
+         allow create, update: if false; // Should be created by a backend function typically
+      }
+    }
+
+    // AR Session Logs
+    match /arSessions/{sessionId} {
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.studentId; // User can log their own sessions
+      // Read access might be restricted to admins or specific analytics roles
+      allow read: if request.auth != null && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId in ["8918", "STRITH23170"]; // Admins can read
+    }
+    
+    // Payments collection
+    match /payments/{paymentId} {
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow read: if request.auth != null && 
+                    (resource.data.userId == request.auth.uid || 
+                     get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId in ["8918", "STRITH23170"]);
+      // No public update or delete on payment records for general users
+      allow update, delete: if false; 
+    }
+     match /payments_failed/{paymentId} {
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow read: if request.auth != null && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.studentId in ["8918", "STRITH23170"];
+      allow update, delete: if false; 
     }
   }
 }

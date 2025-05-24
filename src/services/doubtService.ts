@@ -2,9 +2,11 @@
 
 import {
   db,
-  firestoreServerTimestamp, // Keep for main doubt message if needed elsewhere
-  Timestamp, // Import Timestamp
-  type FieldValue 
+  firestoreServerTimestamp,
+  Timestamp,
+  type FieldValue,
+  arrayUnion,
+  arrayRemove
 } from '@/lib/firebase';
 import {
   collection,
@@ -58,14 +60,11 @@ export function getDoubtsForModule(
         if (replyData.timestamp instanceof Timestamp) {
           ts = replyData.timestamp;
         } else if (replyData.timestamp && typeof (replyData.timestamp as any).toDate === 'function') {
-          // Handling cases where it might be a Firestore-like object but not strictly Timestamp instance on client initially
-          ts = (replyData.timestamp as any).toDate(); 
-           if (!(ts instanceof Date)) ts = new Timestamp(0,0); // ensure it's a Date before making a Timestamp
-           else ts = Timestamp.fromDate(ts);
+          const dateFromData = (replyData.timestamp as any).toDate();
+           ts = Timestamp.fromDate(dateFromData instanceof Date ? dateFromData : new Date(0));
         } else {
-          ts = new Timestamp(0,0); // Fallback for safety
+          ts = Timestamp.fromDate(new Date(0)); 
         }
-
 
         return {
           id: replyData.id || `${docSnap.id}-reply-${Date.now()}-${index}`,
@@ -84,10 +83,13 @@ export function getDoubtsForModule(
         senderId: data.senderId,
         senderName: data.senderName || data.senderId,
         timestamp: data.timestamp as Timestamp, 
+        videoTimestamp: data.videoTimestamp,
         pinned: data.pinned || false,
         replies: processedReplies,
         moduleId: data.moduleId || moduleId,
         courseId: data.courseId || courseId,
+        likes: data.likes || [],
+        upvoteCount: data.upvoteCount || 0,
       });
     });
     callback(doubts);
@@ -105,20 +107,24 @@ export async function addDoubt(
   moduleId: string,
   doubtText: string,
   senderId: string,
-  senderName: string
+  senderName: string,
+  videoTimestamp?: number
 ): Promise<string> {
   if (!courseId || !moduleId || !doubtText.trim() || !senderId) {
     throw new Error('Course ID, Module ID, doubt text, and sender ID are required.');
   }
-  const doubtData: Omit<DoubtMessage, 'id' | 'timestamp'> & { timestamp: FieldValue } = { 
+  const doubtData: Omit<DoubtMessage, 'id' | 'timestamp' | 'replies' | 'likes' | 'upvoteCount' | 'pinned'> & { timestamp: FieldValue, videoTimestamp?: number, pinned: boolean, replies: DoubtReply[], likes: string[], upvoteCount: number } = { 
     text: doubtText,
     senderId: senderId,
     senderName: senderName || senderId,
     timestamp: firestoreServerTimestamp(), 
+    ...(videoTimestamp !== undefined && { videoTimestamp }),
     pinned: false,
     replies: [],
     moduleId: moduleId,
     courseId: courseId,
+    likes: [],
+    upvoteCount: 0,
   };
   const doubtsCollectionRef = collection(
     db,
@@ -161,21 +167,20 @@ export async function addReplyToDoubt(
       throw new Error('Doubt document not found.');
     }
     const doubtData = docSnap.data();
-    // Ensure existing replies' timestamps are Firestore Timestamp objects
+    
     const existingReplies: DoubtReply[] = (doubtData?.replies || []).map((reply: any) => {
         let ts: Timestamp;
         if (reply.timestamp instanceof Timestamp) {
             ts = reply.timestamp;
         } else if (reply.timestamp && typeof (reply.timestamp as any).toDate === 'function') {
-             // Convert plain JS Date or other Firestore-like timestamp objects to Firestore Timestamp
             const date = (reply.timestamp as any).toDate();
             ts = Timestamp.fromDate(date instanceof Date ? date : new Date(0));
         } else {
-            ts = new Timestamp(0,0); // Fallback for malformed data
+             ts = Timestamp.fromDate(new Date(0)); // Fallback for malformed data
         }
         return {
             ...reply,
-            timestamp: ts,
+            timestamp: ts, // Ensure it's a Firestore Timestamp
         };
     });
     
@@ -184,15 +189,14 @@ export async function addReplyToDoubt(
       text: replyText,
       senderId: senderId,
       senderName: senderName || senderId,
-      timestamp: Timestamp.now(), // Use client-side Firestore Timestamp
+      timestamp: Timestamp.now(), // Use client-side Firestore Timestamp for replies array
     };
 
     const updatedReplies = [...existingReplies, newReply];
 
-    // Sort replies by timestamp before saving to maintain chronological order
     updatedReplies.sort((a, b) => {
-      const tsA = a.timestamp as Timestamp; // All elements should be Timestamp now
-      const tsB = b.timestamp as Timestamp;
+      const tsA = a.timestamp; 
+      const tsB = b.timestamp;
       return tsA.toMillis() - tsB.toMillis();
     });
 
@@ -215,7 +219,7 @@ export async function togglePinDoubt(
   moduleId: string,
   doubtId: string,
   currentPinnedStatus: boolean,
-  currentUserId: string
+  currentUserId: string // This is studentId (e.g., "8918")
 ): Promise<void> {
   if (!courseId || !moduleId || !doubtId || !currentUserId) {
     throw new Error('Required fields missing for pinning doubt.');
@@ -233,14 +237,57 @@ export async function togglePinDoubt(
   const doubtSnap = await getDoc(doubtDocRef);
   if (doubtSnap.exists()) {
     const doubtData = doubtSnap.data() as DoubtMessage; 
-    if (doubtData.senderId === currentUserId) {
+    // Allow pinning if user is the sender OR an admin (e.g. studentId '8918')
+    if (doubtData.senderId === currentUserId || currentUserId === '8918') { 
       await updateDoc(doubtDocRef, {
         pinned: !currentPinnedStatus,
       });
     } else {
-      throw new Error("You can only pin/unpin your own doubts.");
+      throw new Error("You can only pin/unpin your own doubts or if you are an admin.");
     }
   } else {
     throw new Error("Doubt not found.");
+  }
+}
+
+// Function to toggle like on a doubt
+export async function toggleLikeDoubt(
+  courseId: string,
+  moduleId: string,
+  doubtId: string,
+  userId: string // Firebase Auth UID of the user liking/unliking
+): Promise<void> {
+  if (!courseId || !moduleId || !doubtId || !userId) {
+    throw new Error('Required fields missing for liking doubt.');
+  }
+
+  const doubtDocRef = doc(
+    db,
+    COURSES_COLLECTION,
+    courseId,
+    MODULES_SUBCOLLECTION,
+    moduleId,
+    DOUBTS_SUBCOLLECTION,
+    doubtId
+  );
+
+  const docSnap = await getDoc(doubtDocRef);
+  if (!docSnap.exists()) {
+    throw new Error("Doubt not found.");
+  }
+
+  const doubtData = docSnap.data() as DoubtMessage;
+  const currentLikes = doubtData.likes || [];
+  
+  if (currentLikes.includes(userId)) {
+    // User already liked, so unlike
+    await updateDoc(doubtDocRef, {
+      likes: arrayRemove(userId)
+    });
+  } else {
+    // User hasn't liked, so like
+    await updateDoc(doubtDocRef, {
+      likes: arrayUnion(userId)
+    });
   }
 }

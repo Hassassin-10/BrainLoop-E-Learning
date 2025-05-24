@@ -1,3 +1,4 @@
+
 'use server';
 
 import { db, STUDENTS_COLLECTION, firestoreServerTimestamp, getDoc, type FieldValue } from '@/lib/firebase';
@@ -50,11 +51,11 @@ export async function removeCompletedCourseFromProfile(userId: string, courseId:
 /**
  * Adds a quiz attempt to the student's profile.
  * @param userId The ID of the student (Firebase Auth UID).
- * @param quizAttemptData Object containing quizId, score, and attemptedAt (as Firestore Timestamp sentinel or resolved).
+ * @param quizAttemptData Object containing quizId, score, and attemptedAt (as a resolved Timestamp).
  */
 export async function addQuizAttemptToProfile(
   userId: string,
-  quizAttemptData: { quizId: string; score: number; attemptedAt: Timestamp | FieldValue }
+  quizAttemptData: { quizId: string; score: number; attemptedAt: Timestamp } // Changed from Timestamp | FieldValue
 ): Promise<void> {
   if (!userId || !quizAttemptData.quizId) {
     throw new Error('User ID and Quiz ID are required for adding quiz attempt.');
@@ -68,41 +69,50 @@ export async function addQuizAttemptToProfile(
     const studentSnap = await getDoc(studentDocRef);
     if (!studentSnap.exists()) {
       console.warn(`Student profile for user ${userId} not found. Cannot add quiz attempt. Consider creating profile first.`);
-      // Depending on desired behavior, you might create a profile here or throw an error.
-      // For now, we'll throw an error if the profile doesn't exist.
       throw new Error(`Student profile for user ${userId} not found.`);
     }
 
     const studentData = studentSnap.data() as StudentProfile;
     const existingAttempts = studentData.quizzesAttempted || [];
-
-    // Create a StudentProfileQuizAttempt object.
-    // The 'attemptedAt' field is a FieldValue (serverTimestamp) here.
-    const newAttemptObject: StudentProfileQuizAttempt = {
-      quizId: quizAttemptData.quizId,
-      score: quizAttemptData.score,
-      attemptedAt: quizAttemptData.attemptedAt as Timestamp, // Cast to Timestamp for the array type, Firestore handles FieldValue correctly
-    };
     
-    // If quizAttemptData.attemptedAt is FieldValue, we need to ensure the array update is type-safe
-    // or cast appropriately for the update. Firestore handles FieldValue within an object in an array update.
-    const newAttemptForUpdate = {
+    // newAttemptForUpdate will now use the concrete Timestamp passed in quizAttemptData
+    const newAttemptForUpdate: StudentProfileQuizAttempt = { 
         quizId: quizAttemptData.quizId,
         score: quizAttemptData.score,
-        attemptedAt: quizAttemptData.attemptedAt, // Pass as FieldValue or Timestamp
+        attemptedAt: quizAttemptData.attemptedAt, 
     };
-
 
     const updatedAttempts = [...existingAttempts, newAttemptForUpdate];
 
     await updateDoc(studentDocRef, {
-      quizzesAttempted: updatedAttempts
+      quizzesAttempted: updatedAttempts,
+      lastLogin: firestoreServerTimestamp() // Also update lastLogin on activity
     });
     console.log(`Quiz attempt for ${quizAttemptData.quizId} added to profile for user ${userId}.`);
   } catch (error) {
     console.error('Error adding quiz attempt to profile:', error);
-    // Rethrow or handle as appropriate for your application
     throw new Error(`Failed to update quiz attempts in profile: ${(error as Error).message}`);
   }
 }
 
+/**
+ * Enrolls a student in a course by adding the course ID to their `enrolledCourseIds` array.
+ * @param userId The Firebase Auth UID of the student.
+ * @param courseId The ID of the course to enroll in.
+ */
+export async function enrollStudentInCourse(userId: string, courseId: string): Promise<void> {
+  if (!userId || !courseId) {
+    throw new Error('User ID and Course ID are required for enrollment.');
+  }
+  const studentDocRef = doc(db, STUDENTS_COLLECTION, userId);
+  try {
+    await updateDoc(studentDocRef, {
+      enrolledCourseIds: arrayUnion(courseId),
+      lastLogin: firestoreServerTimestamp() // Update lastLogin on enrollment activity
+    });
+    console.log(`User ${userId} enrolled in course ${courseId}.`);
+  } catch (error) {
+    console.error('Error enrolling student in course:', error);
+    throw new Error('Failed to enroll student in course.');
+  }
+}

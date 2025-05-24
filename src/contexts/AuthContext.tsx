@@ -16,13 +16,12 @@ import {
   setDoc,
   ALLOWED_STUDENTS_COLLECTION,
   STUDENTS_COLLECTION,
-  Timestamp, // Import Timestamp
+  Timestamp, 
   firebaseInitializationError
 } from '@/lib/firebase';
 import { useToast } from "@/hooks/use-toast";
-import type { StudentProfile } from '@/types/user';
+import type { StudentProfile, StudentProfileMoodSettings } from '@/types/user'; // Added StudentProfileMoodSettings
 
-// Define types for AuthContext value
 interface AuthContextValue {
   firebaseUser: FirebaseUser | null | undefined; 
   firebaseUid: string | null; 
@@ -32,12 +31,11 @@ interface AuthContextValue {
   isAuthenticated: boolean; 
   login: (firebaseUser: FirebaseUser, studentId: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshStudentProfile: () => Promise<void>;
 }
 
-// Create AuthContext
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-// AuthProvider component
 interface AuthProviderProps {
   children: ReactNode;
 }
@@ -53,6 +51,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 	const { toast } = useToast();
 
   const isAuthenticated = !!firebaseUser && !!studentId;
+
+  const fetchStudentProfile = useCallback(async (user: FirebaseUser | null) => {
+    if (user && firebaseDbService) {
+      const studentProfileDocRef = doc(firebaseDbService, STUDENTS_COLLECTION, user.uid);
+      const studentProfileDocSnap = await getDoc(studentProfileDocRef);
+      if (studentProfileDocSnap.exists()) {
+        const profileData = studentProfileDocSnap.data() as StudentProfile;
+        setStudentId(profileData.studentId);
+        
+        // Ensure moodSettings is initialized if not present
+        const moodSettings = profileData.moodSettings || { disableMoodCheck: false };
+        setStudentProfile({ ...profileData, moodSettings });
+
+        return { ...profileData, moodSettings };
+      } else {
+        setStudentId(null);
+        setStudentProfile(null);
+      }
+    } else {
+      setStudentId(null);
+      setStudentProfile(null);
+    }
+    return null;
+  }, []);
+
 
   useEffect(() => {
     if (firebaseInitializationError) {
@@ -86,24 +109,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (user) {
         setFirebaseUser(user);
         setFirebaseUid(user.uid);
-        
-        const studentProfileDocRef = doc(firebaseDbService, STUDENTS_COLLECTION, user.uid);
-        const studentProfileDocSnap = await getDoc(studentProfileDocRef);
-
-        if (studentProfileDocSnap.exists()) {
-          const profileData = studentProfileDocSnap.data() as StudentProfile;
-          setStudentId(profileData.studentId);
-          setStudentProfile(profileData);
-          // Removed automatic redirection to prevent loops if already on login or other public pages.
-          // Navigation should be handled by ProtectedRoute or page-specific logic.
-        } else {
-          // User is authenticated with Firebase, but no student profile means student ID step is pending
-          setStudentId(null);
-          setStudentProfile(null);
-           if (pathname !== '/login') { // If not on login page, guide to login for student ID step.
-            // router.push('/login'); // Commented out to prevent potential loops during initial load or if login page itself handles this state.
-          }
-        }
+        await fetchStudentProfile(user);
       } else {
         setFirebaseUser(null);
         setFirebaseUid(null);
@@ -113,7 +119,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setIsLoading(false);
     });
     return () => unsubscribe();
-  }, [pathname, router, toast]);
+  }, [pathname, router, toast, fetchStudentProfile]);
+
+  const refreshStudentProfile = useCallback(async () => {
+    if (firebaseUser) {
+      setIsLoading(true);
+      await fetchStudentProfile(firebaseUser);
+      setIsLoading(false);
+    }
+  }, [firebaseUser, fetchStudentProfile]);
+
 
   const login = useCallback(async (loggedInFirebaseUser: FirebaseUser, studentIdInput: string) => {
     if (firebaseInitializationError || !firebaseAuthService || !firebaseDbService) {
@@ -128,48 +143,45 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const allowedStudentDocSnap = await getDoc(allowedStudentDocRef);
 
       let allowedStudentInfo: { name?: string; email?: string } | null = null;
+      const bypassIds = ["8918", "8946", "8947", "STRITH23170"]; 
 
       if (allowedStudentDocSnap.exists()) {
         allowedStudentInfo = allowedStudentDocSnap.data() as { name?: string; email?: string };
       } else {
-        // Allow student ID "8918" (and any other IDs that should bypass the allowed_students check for dev/testing)
-        const bypassIds = ["8918", "8946", "8947", "STRITH23170"]; // Add other special case IDs here if needed
-        if (bypassIds.includes(studentIdInput)) {
-           toast({
-            title: "Developer Note",
-            description: `Student ID ${studentIdInput} is allowed for testing. Ensure it's in 'allowed_students' for production.`,
-            variant: "default",
-            duration: 7000,
-          });
-          // allowedStudentInfo remains null, name/email will be derived later.
-        } else {
-          // For other IDs, they must exist in allowed_students.
+        if (!bypassIds.includes(studentIdInput)) {
           toast({
             title: "Verification Failed",
             description: "Invalid student ID. This ID is not authorized for access.",
             variant: "destructive",
           });
           setIsLoading(false);
+          setFirebaseUser(null); // Clear pending user if ID check fails
           return; 
         }
+        // For bypassed IDs, allow them but maybe log or use default info
+        // console.log(`Student ID ${studentIdInput} bypassed authorization check.`);
       }
 
       const studentProfileDocRef = doc(firebaseDbService, STUDENTS_COLLECTION, loggedInFirebaseUser.uid);
       const studentProfileDocSnap = await getDoc(studentProfileDocRef);
       
       const profileName = allowedStudentInfo?.name || loggedInFirebaseUser.displayName || `Student ${studentIdInput}`;
-      const profileEmail = allowedStudentInfo?.email || loggedInFirebaseUser.email || `${studentIdInput}@example.com`;
+      const profileEmail = allowedStudentInfo?.email || loggedInFirebaseUser.email || `${studentIdInput}@example.com`; // Fallback email
       
+      const existingProfileData = studentProfileDocSnap.exists() ? studentProfileDocSnap.data() as StudentProfile : {};
+
       const newStudentProfileData: StudentProfile = {
         uid: loggedInFirebaseUser.uid,
         studentId: studentIdInput,
         name: profileName,
         email: profileEmail,
-        coursesCompleted: studentProfileDocSnap.exists() ? (studentProfileDocSnap.data() as StudentProfile).coursesCompleted : [],
-        quizzesAttempted: studentProfileDocSnap.exists() ? (studentProfileDocSnap.data() as StudentProfile).quizzesAttempted : [],
-        // progress map removed, course progress is now in a subcollection
+        coursesCompleted: existingProfileData.coursesCompleted || [],
+        quizzesAttempted: existingProfileData.quizzesAttempted || [],
+        enrolledCourseIds: existingProfileData.enrolledCourseIds || [],
+        moodSettings: existingProfileData.moodSettings || { disableMoodCheck: false }, // Initialize moodSettings
+        audioNavSettings: existingProfileData.audioNavSettings || { isEnabled: true, preferredLanguage: 'en-US' },
         lastLogin: firestoreServerTimestamp() as Timestamp,
-        createdAt: studentProfileDocSnap.exists() ? (studentProfileDocSnap.data() as StudentProfile).createdAt : firestoreServerTimestamp() as Timestamp,
+        createdAt: existingProfileData.createdAt || firestoreServerTimestamp() as Timestamp,
       };
 
       await setDoc(studentProfileDocRef, newStudentProfileData, { merge: true }); 
@@ -183,11 +195,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 				title: "Login Successful!",
 				description: `Welcome, ${newStudentProfileData.name}!`,
 			});
-      router.push('/');
+      
+      const queryParams = new URLSearchParams(window.location.search);
+      const redirectPath = queryParams.get('redirect') || '/';
+      router.push(redirectPath);
 
     } catch (error: any) {
       console.error("Student ID verification/profile creation error:", error);
-      // Avoid showing duplicate "Verification Failed" if already handled
       const bypassIds = ["8918", "8946", "8947", "STRITH23170"];
       if (!(error.message.includes("Invalid student ID") && !bypassIds.includes(studentIdInput))) {
           toast({
@@ -196,6 +210,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               variant: "destructive",
           });
       }
+       setFirebaseUser(null); // Ensure firebaseUser is cleared on error to allow re-login attempt.
+       setStudentId(null);
+       setStudentProfile(null);
     } finally {
       setIsLoading(false);
     }
@@ -240,6 +257,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isAuthenticated,
     login,
     logout,
+    refreshStudentProfile,
   };
 
   return (
@@ -256,4 +274,3 @@ export const useAuth = () => {
   }
   return context;
 };
-

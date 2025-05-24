@@ -12,9 +12,12 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { PlusCircle, Save, Trash2, Edit3, Loader2, ListChecks, BookCopy, BarChart3, DatabaseZap, FlaskConical, Info } from 'lucide-react';
+import { PlusCircle, Save, Trash2, Edit3, Loader2, ListChecks, BookCopy, BarChart3, DatabaseZap, FlaskConical, Info, Gamepad, Wand2, Check, ShieldAlert, PlayCircle, TagsIcon } from 'lucide-react';
 import type { Course, CourseModule, LearningStyle, ModuleType, DifficultyLevel } from '@/types/course';
 import { mockCourses as initialCourses, learningStyleIcons, moduleTypeIcons, difficultyLevels } from '@/data/mockCourses';
+import { generateGameAssessment, type GameAssessmentGenerationInput, type GameAssessmentOutputFlowType } from '@/ai/flows/generate-game-assessment';
+import { saveGeneratedAssessment, getGameAssessmentsForModule, deleteGameAssessment, setGameAssessmentApproval, type GameAssessment } from '@/services/gameAssessmentService';
+import Link from 'next/link';
 
 
 export default function AdminPage() {
@@ -29,10 +32,27 @@ export default function AdminPage() {
   const isAdmin = isAuthenticated && studentId === '8918';
   const adminOnlyMessage = "Only Admin (ID: 8918) has permission for this action.";
 
+  // For Game Assessment Generation
+  const [selectedCourseForAssessment, setSelectedCourseForAssessment] = useState<string>('');
+  const [selectedModuleForAssessment, setSelectedModuleForAssessment] = useState<string>('');
+  const [assessmentDifficulty, setAssessmentDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
+  const [isGeneratingAssessment, setIsGeneratingAssessment] = useState(false);
+  const [generatedGameAssessments, setGeneratedGameAssessments] = useState<GameAssessment[]>([]);
+  const [isLoadingAssessments, setIsLoadingAssessments] = useState(false);
+
+
   useEffect(() => {
     setMounted(true);
     // Here you would typically fetch courses from your backend
   }, []);
+
+  useEffect(() => {
+    if (selectedCourseForAssessment && selectedModuleForAssessment) {
+      fetchGameAssessments(selectedCourseForAssessment, selectedModuleForAssessment);
+    } else {
+      setGeneratedGameAssessments([]);
+    }
+  }, [selectedCourseForAssessment, selectedModuleForAssessment]);
 
 
   const handleInputChange = (field: keyof Course, value: any) => {
@@ -43,7 +63,12 @@ export default function AdminPage() {
   const handleModuleChange = (index: number, field: keyof CourseModule, value: any) => {
     if (!isAdmin) return;
     const updatedModules = [...(currentCourse.modules || [])];
-    updatedModules[index] = { ...updatedModules[index], [field]: value };
+    if (field === 'tags') {
+      // Assuming value is a comma-separated string from the input
+      updatedModules[index] = { ...updatedModules[index], [field]: typeof value === 'string' ? value.split(',').map(tag => tag.trim()).filter(tag => tag) : [] };
+    } else {
+      updatedModules[index] = { ...updatedModules[index], [field]: value };
+    }
     setCurrentCourse((prev) => ({ ...prev, modules: updatedModules }));
   };
 
@@ -54,6 +79,8 @@ export default function AdminPage() {
       type: 'video',
       title: '',
       estimatedDuration: '30 mins',
+      tags: [],
+      suggestedYoutubeVideos: []
     };
     setCurrentCourse((prev) => ({
       ...prev,
@@ -123,6 +150,91 @@ export default function AdminPage() {
   const resetForm = () => {
     setCurrentCourse({modules: []});
     setIsEditing(false);
+  };
+
+  const handleGenerateGameAssessment = async () => {
+    if (!isAdmin) {
+      toast({ title: 'Permission Denied', description: adminOnlyMessage, variant: 'destructive' });
+      return;
+    }
+    if (!selectedCourseForAssessment || !selectedModuleForAssessment) {
+      toast({ title: 'Error', description: 'Please select a course and module first.', variant: 'destructive' });
+      return;
+    }
+    setIsGeneratingAssessment(true);
+    try {
+      const course = courses.find(c => c.id === selectedCourseForAssessment);
+      const module = course?.modules.find(m => m.id === selectedModuleForAssessment);
+      if (!course || !module) {
+        toast({ title: 'Error', description: 'Selected course or module not found.', variant: 'destructive' });
+        return;
+      }
+
+      const assessmentInput: GameAssessmentGenerationInput = {
+        courseId: selectedCourseForAssessment,
+        moduleId: selectedModuleForAssessment,
+        topic: module.title, 
+        moduleObjectives: [module.description || `Learn about ${module.title}`], 
+        difficulty: assessmentDifficulty,
+      };
+
+      const generatedData: GameAssessmentOutputFlowType = await generateGameAssessment(assessmentInput);
+      const assessmentToSave: import('@/types/gameAssessment').GameAssessmentOutput = {
+        ...generatedData
+      };
+
+      const savedAssessmentId = await saveGeneratedAssessment(selectedCourseForAssessment, selectedModuleForAssessment, assessmentToSave);
+      
+      toast({ title: 'Game Assessment Generated!', description: `Assessment "${generatedData.title}" saved with ID: ${savedAssessmentId}. Please review and approve it below.` });
+      fetchGameAssessments(selectedCourseForAssessment, selectedModuleForAssessment); 
+    } catch (error: any) {
+      console.error('Error generating game assessment:', error);
+      toast({ title: 'Generation Failed', description: error.message || 'Could not generate game assessment.', variant: 'destructive' });
+    } finally {
+      setIsGeneratingAssessment(false);
+    }
+  };
+  
+  const fetchGameAssessments = async (courseId: string, moduleId: string) => {
+    setIsLoadingAssessments(true);
+    try {
+      const assessments = await getGameAssessmentsForModule(courseId, moduleId, isAdmin); 
+      setGeneratedGameAssessments(assessments);
+    } catch (error) {
+      console.error('Error fetching game assessments:', error);
+      toast({ title: 'Error', description: 'Could not fetch game assessments.', variant: 'destructive' });
+    } finally {
+      setIsLoadingAssessments(false);
+    }
+  };
+
+  const handleToggleAssessmentApproval = async (assessment: GameAssessment) => {
+    if (!isAdmin) return;
+    try {
+      await setGameAssessmentApproval(assessment.courseId, assessment.moduleId, assessment.id, !assessment.approvedByAdmin);
+      toast({ title: 'Success', description: `Assessment approval status updated for "${assessment.title}".` });
+      fetchGameAssessments(selectedCourseForAssessment, selectedModuleForAssessment); 
+    } catch (error: any) {
+      toast({ title: 'Error', description: `Failed to update approval: ${error.message}`, variant: 'destructive' });
+    }
+  };
+
+  const handleDeleteGameAssessment = async (assessment: GameAssessment) => {
+    if (!isAdmin) return;
+    if (!window.confirm(`Are you sure you want to delete assessment "${assessment.title}"?`)) return;
+
+    try {
+      await deleteGameAssessment(assessment.courseId, assessment.moduleId, assessment.id);
+      toast({ title: 'Success', description: `Assessment "${assessment.title}" deleted.` });
+      fetchGameAssessments(selectedCourseForAssessment, selectedModuleForAssessment); 
+    } catch (error: any) {
+      toast({ title: 'Error', description: `Failed to delete assessment: ${error.message}`, variant: 'destructive' });
+    }
+  };
+
+
+  const getAvailableModulesForAssessment = () => {
+    return courses.find(c => c.id === selectedCourseForAssessment)?.modules || [];
   };
 
 
@@ -307,12 +419,34 @@ export default function AdminPage() {
                     />
                   </div>
                 )}
+                 <div>
+                    <Label htmlFor={`moduleDescription${index}`}>Module Description</Label>
+                    <Textarea
+                        id={`moduleDescription${index}`}
+                        value={module.description || ''}
+                        onChange={(e) => handleModuleChange(index, 'description', e.target.value)}
+                        placeholder="Briefly describe this module's content and objectives."
+                        className="bg-background"
+                        disabled={!isAdmin || isLoading}
+                        rows={2}
+                    />
+                </div>
+                <div>
+                  <Label htmlFor={`moduleTags${index}`}>Tags (comma-separated)</Label>
+                  <Input
+                    id={`moduleTags${index}`}
+                    value={module.tags ? module.tags.join(', ') : ''}
+                    onChange={(e) => handleModuleChange(index, 'tags', e.target.value)}
+                    placeholder="e.g., python, basics, loops"
+                    className="bg-background"
+                    disabled={!isAdmin || isLoading}
+                  />
+                </div>
               </Card>
             )})}
             <Tooltip>
                 <TooltipTrigger asChild>
-                     {/* The button itself is wrapped, so its disabled state is handled by the TooltipTrigger correctly */}
-                    <span tabIndex={!isAdmin ? 0 : -1}> {/* Make span focusable when button is disabled for tooltip */}
+                    <span tabIndex={!isAdmin ? 0 : -1}> 
                         <Button variant="outline" onClick={addModule} className="text-accent border-accent hover:bg-accent/10" disabled={!isAdmin || isLoading}>
                             <PlusCircle className="mr-2 h-4 w-4" /> Add Module
                         </Button>
@@ -382,7 +516,7 @@ export default function AdminPage() {
                           {course.modules.map((mod) => {
                             const ModIcon = moduleTypeIcons[mod.type] || ListChecks;
                             let typeDisplay = mod.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                            if (mod.type === 'ar_interactive_lab') typeDisplay = 'AR Interactive Lab';
+                            if (mod.type === 'ar_interactive_lab') typeDisplay = 'AR Lab';
 
                             return (
                             <li key={mod.id} className="flex items-center">
@@ -391,6 +525,8 @@ export default function AdminPage() {
                               {mod.estimatedDuration && <span className="text-muted-foreground text-xs ml-1">({mod.estimatedDuration})</span>}
                               {mod.url && <a href={mod.url} target="_blank" rel="noopener noreferrer" className="ml-2 text-accent hover:underline">Link</a>}
                               {mod.content && <p className="text-xs text-muted-foreground italic mt-1">Preview: {mod.content.substring(0, 50)}...</p>}
+                              {mod.description && <p className="text-xs text-muted-foreground italic mt-1">Desc: {mod.description.substring(0, 50)}...</p>}
+                               {mod.tags && mod.tags.length > 0 && <p className="text-xs text-muted-foreground italic mt-1 flex items-center"><TagsIcon className="mr-1 h-3 w-3"/> Tags: {mod.tags.join(', ')}</p>}
                             </li>
                           )})}
                         </ul>
@@ -428,6 +564,125 @@ export default function AdminPage() {
           )}
         </CardContent>
       </Card>
+
+      <Card className="shadow-xl">
+        <CardHeader>
+          <CardTitle className="text-xl font-bold text-primary flex items-center">
+            <Gamepad className="mr-2 h-6 w-6" /> GPT-Powered Game-Based Assessments
+          </CardTitle>
+          <CardDescription>
+            Generate and manage interactive game-based assessments for course modules.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {isAdmin ? (
+            <>
+              <div className="grid md:grid-cols-3 gap-4">
+                <div>
+                  <Label htmlFor="assessmentCourseSelect">Target Course</Label>
+                  <Select value={selectedCourseForAssessment} onValueChange={(value) => { setSelectedCourseForAssessment(value); setSelectedModuleForAssessment(''); setGeneratedGameAssessments([]); }}>
+                    <SelectTrigger id="assessmentCourseSelect" className="bg-background">
+                      <SelectValue placeholder="Select a course" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {courses.map(course => <SelectItem key={course.id} value={course.id}>{course.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="assessmentModuleSelect">Target Module</Label>
+                  <Select value={selectedModuleForAssessment} onValueChange={(value) => setSelectedModuleForAssessment(value)} disabled={!selectedCourseForAssessment || getAvailableModulesForAssessment().length === 0}>
+                    <SelectTrigger id="assessmentModuleSelect" className="bg-background">
+                      <SelectValue placeholder="Select a module" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getAvailableModulesForAssessment().map(module => <SelectItem key={module.id} value={module.id}>{module.title}</SelectItem>)}
+                      {selectedCourseForAssessment && getAvailableModulesForAssessment().length === 0 && <p className="p-2 text-sm text-muted-foreground">No modules in selected course.</p>}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="assessmentDifficultySelect">Assessment Difficulty</Label>
+                  <Select value={assessmentDifficulty} onValueChange={(value) => setAssessmentDifficulty(value as 'easy' | 'medium' | 'hard')}>
+                    <SelectTrigger id="assessmentDifficultySelect" className="bg-background">
+                      <SelectValue placeholder="Select difficulty" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="easy">Easy</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="hard">Hard</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <Button onClick={handleGenerateGameAssessment} disabled={isGeneratingAssessment || !selectedCourseForAssessment || !selectedModuleForAssessment} className="bg-accent text-accent-foreground hover:bg-accent/90">
+                {isGeneratingAssessment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
+                Generate New Game Assessment
+              </Button>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Game-based assessment generation is restricted to administrators. (Admin ID: 8918)
+            </p>
+          )}
+
+          {selectedModuleForAssessment && (
+            <div className="mt-6">
+              <h4 className="text-lg font-semibold text-foreground mb-2">Existing Game Assessments for this Module:</h4>
+              {isLoadingAssessments ? (
+                <div className="flex justify-center items-center py-4"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+              ) : generatedGameAssessments.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No game assessments generated yet for this module.</p>
+              ) : (
+                <Accordion type="single" collapsible className="w-full">
+                  {generatedGameAssessments.map(ga => (
+                    <AccordionItem value={ga.id} key={ga.id}>
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex justify-between items-center w-full">
+                            <span className="font-medium text-left">{ga.title} ({ga.difficulty}) - {ga.challengeType.replace(/_/g, ' ')}</span>
+                            {ga.approvedByAdmin ? <Check className="h-5 w-5 text-green-500 ml-2" title="Approved" /> : <ShieldAlert className="h-5 w-5 text-yellow-500 ml-2" title="Pending Approval" />}
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="p-4 space-y-2 bg-secondary/20 rounded-md">
+                        <p><strong>Story:</strong> {ga.storyNarration}</p>
+                        <p><strong>Challenge Type:</strong> {ga.challengeType}</p>
+                        <pre className="text-xs bg-muted p-2 rounded whitespace-pre-wrap max-h-40 overflow-y-auto">{JSON.stringify(ga.challengeData, null, 2)}</pre>
+                        <p className="text-xs mt-1">Generated: {ga.generatedAt ? new Date(ga.generatedAt as string).toLocaleDateString() : 'N/A'}</p>
+                        {isAdmin && (
+                            <div className="flex gap-2 mt-2 flex-wrap items-center">
+                                <Button 
+                                  size="sm" 
+                                  variant={ga.approvedByAdmin ? "secondary" : "default"} 
+                                  onClick={() => handleToggleAssessmentApproval(ga)} 
+                                  className={ga.approvedByAdmin ? "" : "bg-green-600 hover:bg-green-700 text-white"}
+                                >
+                                  {ga.approvedByAdmin ? <ShieldAlert className="mr-1 h-4 w-4" /> : <Check className="mr-1 h-4 w-4" />}
+                                  {ga.approvedByAdmin ? 'Unapprove' : 'Approve Assessment'}
+                                </Button>
+                                <Button size="sm" variant="destructive" onClick={() => handleDeleteGameAssessment(ga)}> <Trash2 className="mr-1 h-4 w-4" /> Delete</Button>
+                                 <Link href={`/assessments/take/${ga.courseId}_${ga.moduleId}_${ga.id}`} target="_blank" rel="noopener noreferrer">
+                                    <Button size="sm" variant="outline"> <PlayCircle className="mr-1 h-4 w-4" /> Take Assessment (Test)</Button>
+                                </Link>
+                            </div>
+                        )}
+                        {!isAdmin && ga.approvedByAdmin && (
+                           <Link href={`/assessments/take/${ga.courseId}_${ga.moduleId}_${ga.id}`} target="_blank" rel="noopener noreferrer">
+                                <Button size="sm" variant="default" className="mt-2 bg-primary text-primary-foreground"> <PlayCircle className="mr-1 h-4 w-4" /> Take Assessment</Button>
+                            </Link>
+                        )}
+                         {!isAdmin && !ga.approvedByAdmin && (
+                            <p className="text-xs text-muted-foreground italic mt-2">This assessment is pending admin approval.</p>
+                        )}
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
 
       <Card className="shadow-xl">
         <CardHeader>

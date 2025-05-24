@@ -138,6 +138,13 @@ CVV: 123
 
 ---
 
+## 🧑‍💻 Contributors
+
+- A-Month-SP (Lead Developer)
+- Firebase Studio Copilot (AI-generated code assist)
+
+---
+
 ## 📜 License
 
 MIT License. Free for educational and non-commercial use.

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { UserCircle, LogOut, Library, FlaskConical, Search, Sun, Moon, FileText, Settings2, Brain, HelpCircle, Puzzle, User, Bot } from 'lucide-react'; // Added Bot
+import { UserCircle, LogOut, Library, FlaskConical, Search, Sun, Moon, FileText, Settings2, Brain, HelpCircle, Puzzle, User, Bot, Radio, CalendarDays } from 'lucide-react'; // Added CalendarDays
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from 'next-themes';
 import { useState, useEffect } from 'react';
@@ -27,6 +27,8 @@ export default function AppHeader() {
   const toggleTheme = () => {
     setTheme(theme === 'dark' ? 'light' : 'dark');
   };
+
+  const isAdmin = isAuthenticated && studentId === '8918';
 
   return (
     <header className="sticky top-0 z-50 flex h-16 items-center justify-between border-b px-4 md:px-6 shadow-sm app-header-acrylic">
@@ -77,18 +79,22 @@ export default function AppHeader() {
               <FileText className="mr-1 h-4 w-4" /> AI Quiz
             </Link>
           </Button>
-          {/* Removed direct Chatbot link from header, as it's a global floating button now.
-              If a dedicated page for AI tools is desired, it could be:
-           <Button variant="ghost" asChild size="sm">
-            <Link href="/ai-tools"> <Bot className="mr-1 h-4 w-4" /> AI Tools </Link>
-           </Button>
-          */}
+          <Button variant="ghost" asChild size="sm">
+            <Link href="/timetable">
+              <CalendarDays className="mr-1 h-4 w-4" /> Time Table
+            </Link>
+          </Button>
+          <Button variant="ghost" asChild size="sm">
+            <Link href="/live-meetings">
+              <Radio className="mr-1 h-4 w-4" /> Live Meetings
+            </Link>
+          </Button>
            <Button variant="ghost" asChild size="sm">
             <Link href="/profile">
               <User className="mr-1 h-4 w-4" /> Profile
             </Link>
           </Button>
-          {studentId === '8918' && ( 
+          {isAdmin && ( 
             <Button variant="ghost" asChild size="sm">
               <Link href="/admin">
                 <Settings2 className="mr-1 h-4 w-4" /> Admin
@@ -126,4 +132,3 @@ export default function AppHeader() {
     </header>
   );
 }
-

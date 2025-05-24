@@ -25,7 +25,9 @@ import {
   Brain, 
   Puzzle,
   User,
-  Bot // Changed from MessageSquareText to Bot
+  Bot,
+  Radio,
+  CalendarDays // Added CalendarDays
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -37,9 +39,8 @@ const navItemsBase = [
   { href: '/qa', label: 'Q & A', icon: HelpCircle },
   { href: '/static-quiz', label: 'Static Quiz', icon: Puzzle },
   { href: '/quiz', label: 'AI Quiz', icon: FileText },
-  // Chatbot link removed as it's now global, but an icon could still represent it if needed as a page
-  // For example, if there was a dedicated page to interact with AI tools beyond the global chatbot:
-  // { href: '/ai-tools', label: 'AI Assistant Tools', icon: Bot }, 
+  { href: '/timetable', label: 'Time Table', icon: CalendarDays }, // Added Time Table
+  { href: '/live-meetings', label: 'Live Meetings', icon: Radio },
   { href: '/profile', label: 'My Profile', icon: User },
 ];
 
@@ -61,7 +62,8 @@ export default function AppSidebar() {
     return null;
   }
   
-  const navItems = studentId === '8918' ? [...navItemsBase, adminNavItem] : navItemsBase;
+  const isAdmin = isAuthenticated && studentId === '8918';
+  const navItems = isAdmin ? [...navItemsBase, adminNavItem] : navItemsBase;
 
 
   return (
@@ -121,4 +123,3 @@ export default function AppSidebar() {
     </Sidebar>
   );
 }
-

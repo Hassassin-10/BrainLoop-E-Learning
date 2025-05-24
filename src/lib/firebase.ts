@@ -1,8 +1,9 @@
+
 // Import the functions you need from the SDKs you need
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
-import { 
-  getAuth, 
-  type Auth, 
+import {
+  getAuth,
+  type Auth,
   GoogleAuthProvider,
   signInWithPopup,
   createUserWithEmailAndPassword,
@@ -11,28 +12,32 @@ import {
   signOut as firebaseSignOut, // Renamed to avoid conflict
   type User as FirebaseUser // Alias User to FirebaseUser
 } from 'firebase/auth';
-import { 
-  getFirestore, 
-  type Firestore, 
+import {
+  getFirestore,
+  type Firestore,
   serverTimestamp as firestoreServerTimestamp,
   doc,
   getDoc,
+  getDocs, // Added getDocs
   setDoc,
   collection,
   addDoc,
-  updateDoc, 
-  arrayUnion, 
-  arrayRemove, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  Timestamp, 
+  updateDoc,
+  deleteDoc, // Added deleteDoc
+  arrayUnion,
+  arrayRemove,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  Timestamp,
   type FirestoreError,
-  type FieldValue // Added FieldValue export
+  type FieldValue
 } from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
 import { getDatabase, type Database, serverTimestamp as rtdbServerTimestamp, ref, set } from 'firebase/database';
+import { getMessaging, getToken, onMessage, type Messaging } from 'firebase/messaging'; // Added Messaging imports
+import { v4 as uuidv4 } from 'uuid';
 
 // Your web app's Firebase configuration using environment variables
 const firebaseConfig = {
@@ -50,12 +55,13 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 let storage: FirebaseStorage | null = null;
 let rtdb: Database | null = null;
+let messaging: Messaging | null = null; // Added messaging instance
 let firebaseInitializationError: Error | null = null;
 
-if (!firebaseConfig.apiKey) {
-  console.error("Firebase API Key is missing. Please check your environment variables (NEXT_PUBLIC_FIREBASE_API_KEY).");
-  firebaseInitializationError = new Error("Firebase API Key is missing. Firebase will not work.");
-} else if (typeof window !== 'undefined') { // Ensure Firebase initializes only on the client-side
+if (!firebaseConfig.apiKey || !firebaseConfig.authDomain || !firebaseConfig.projectId) {
+  console.error("Firebase API Key, Auth Domain, or Project ID is missing. Please check your environment variables (NEXT_PUBLIC_FIREBASE_...).");
+  firebaseInitializationError = new Error("Firebase core configuration is missing. Firebase will not work.");
+} else {
   try {
     if (!getApps().length) {
       app = initializeApp(firebaseConfig);
@@ -67,34 +73,38 @@ if (!firebaseConfig.apiKey) {
       auth = getAuth(app);
       db = getFirestore(app);
       storage = getStorage(app);
-      rtdb = getDatabase(app);
-      console.log("Firebase initialized successfully.");
+      if (firebaseConfig.databaseURL) {
+         rtdb = getDatabase(app);
+      }
+      // Initialize Firebase Messaging
+      if (typeof window !== 'undefined') { // Messaging is client-side only
+        messaging = getMessaging(app);
+      }
+      // console.log("Firebase initialized.");
     } else {
       throw new Error("Firebase app could not be initialized.");
     }
   } catch (error: any) {
     console.error("Firebase initialization error:", error);
     firebaseInitializationError = error;
-    // Ensure these are null if initialization fails
     app = null;
     auth = null;
     db = null;
     storage = null;
     rtdb = null;
+    messaging = null;
   }
-} else {
-  // For server-side, you might have a different initialization or skip client-side specific services
-  // console.log("Firebase client-side initialization skipped on server.");
 }
 
 
-export { 
-  app, 
-  auth, 
-  db, 
-  storage, 
-  rtdb, 
-  rtdbServerTimestamp, 
+export {
+  app,
+  auth,
+  db,
+  storage,
+  rtdb,
+  messaging, // Export messaging
+  rtdbServerTimestamp,
   firestoreServerTimestamp,
   GoogleAuthProvider,
   signInWithPopup,
@@ -104,23 +114,28 @@ export {
   firebaseSignOut,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   collection,
   addDoc,
   updateDoc,
+  deleteDoc,
   arrayUnion,
   arrayRemove,
   query,
   where,
   orderBy,
   onSnapshot,
-  ref, 
+  ref,
   set,
-  Timestamp, 
+  Timestamp,
   type FirebaseUser,
-  type FirestoreError, 
+  type FirestoreError,
   firebaseInitializationError,
-  type FieldValue // Export FieldValue
+  type FieldValue,
+  uuidv4,
+  getToken, // Export FCM getToken
+  onMessage // Export FCM onMessage
 };
 
 // Firestore collection names
@@ -128,7 +143,6 @@ export const ALLOWED_STUDENTS_COLLECTION = 'allowed_students';
 export const STUDENTS_COLLECTION = 'students';
 export const FEEDBACK_COLLECTION = 'feedback';
 export const STUDENT_QUIZ_ATTEMPTS_COLLECTION = 'student_quiz_attempts';
-export const USERS_COLLECTION = 'users'; 
-export const STUDENT_PROGRESS_COLLECTION = 'student_progress'; 
-export const COURSES_COLLECTION_FS = 'courses'; 
-
+export const USERS_COLLECTION = 'users';
+export const STUDENT_PROGRESS_COLLECTION = 'student_progress';
+export const COURSES_COLLECTION_FS = 'courses';

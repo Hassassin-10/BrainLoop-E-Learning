@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -10,6 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { mockCourses, moduleTypeIcons } from '@/data/mockCourses';
 import type { CourseModule } from '@/types/course';
 import { ExternalLink, FlaskConical, Loader2, ScanSearch } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { logArSessionLaunch } from '@/services/arSessionService';
+import { useToast } from '@/hooks/use-toast';
 
 interface ArLabItem extends CourseModule {
   courseName: string;
@@ -20,6 +22,8 @@ interface ArLabItem extends CourseModule {
 export default function LabsPage() {
   const [arLabs, setArLabs] = useState<ArLabItem[]>([]);
   const [mounted, setMounted] = useState(false);
+  const { firebaseUser, studentId } = useAuth();
+  const { toast } = useToast();
 
   useEffect(() => {
     setMounted(true);
@@ -38,6 +42,28 @@ export default function LabsPage() {
     });
     setArLabs(labs);
   }, []);
+
+  const handleArLabLaunch = async (lab: ArLabItem) => {
+    if (!lab.url) return;
+    let toolName = 'generic_ar';
+    if (lab.url.includes('phet.colorado.edu')) toolName = 'phet';
+    else if (lab.url.includes('visualgo.net')) toolName = 'visualgo';
+    else if (lab.url.includes('ophysics.com')) toolName = 'ophysics';
+    else if (lab.url.includes('physicsclassroom.com')) toolName = 'physicsclassroom';
+    else if (lab.url.includes('falstad.com')) toolName = 'falstad';
+    
+    if (firebaseUser?.uid && studentId) {
+      try {
+        await logArSessionLaunch(firebaseUser.uid, studentId, lab.courseId, lab.id, toolName, lab.url);
+        toast({ title: "AR Lab Session Logged", description: "Your interaction with the AR lab has been recorded."});
+      } catch (error) {
+        console.error("Failed to log AR session launch:", error);
+        toast({ title: "Logging Error", description: "Could not log AR lab session.", variant: "destructive"});
+      }
+    }
+    window.open(lab.url, '_blank', 'noopener,noreferrer');
+  };
+
 
   if (!mounted) {
     return (
@@ -66,7 +92,7 @@ export default function LabsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {arLabs.map((lab) => {
-            const placeholderImageIndex = parseInt(lab.id.replace(/\D/g,''), 10) % 4 + 9; // cycle through random=9,10,11,12
+            const placeholderImageIndex = parseInt(lab.id.replace(/\D/g,''), 10) % 4 + 9; 
 
             return (
               <Card key={lab.id} className="flex flex-col overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300">
@@ -97,10 +123,11 @@ export default function LabsPage() {
                 </CardContent>
                 <CardFooter>
                   {lab.url ? (
-                    <Button asChild className="w-full bg-accent text-accent-foreground hover:bg-accent/90">
-                      <a href={lab.url} target="_blank" rel="noopener noreferrer">
-                        Launch AR Lab <ExternalLink className="ml-2 h-4 w-4" />
-                      </a>
+                    <Button 
+                      onClick={() => handleArLabLaunch(lab)}
+                      className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
+                    >
+                      Launch AR Lab <ExternalLink className="ml-2 h-4 w-4" />
                     </Button>
                   ) : (
                     <Button className="w-full" disabled>Lab Link Unavailable</Button>

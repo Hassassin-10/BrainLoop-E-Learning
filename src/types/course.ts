@@ -20,6 +20,17 @@ export const moduleTypeIcons: Record<ModuleType | 'discussion', React.ElementTyp
 
 export const difficultyLevels: DifficultyLevel[] = ['Beginner', 'Intermediate', 'Advanced'];
 
+export interface SuggestedYouTubeVideo {
+  videoId: string;
+  title: string;
+  thumbnailUrl?: string; // URL to the video thumbnail
+  channelTitle?: string;
+  description?: string; // Optional, can be long
+  publishedAt?: string; // ISO string date
+  viewCount?: string; // Often a string like "1,234,567 views"
+  likeCount?: string; // Also often a string
+}
+
 export interface CourseModule {
   id: string;
   type: ModuleType;
@@ -28,6 +39,8 @@ export interface CourseModule {
   content?: string; // For reading material or inline exercise description
   description?: string; // Description for the module, especially useful for videos
   estimatedDuration?: string; // e.g., "30 mins", "1 hour"
+  tags?: string[]; // Keywords for searching relevant YouTube videos
+  suggestedYoutubeVideos?: SuggestedYouTubeVideo[]; // Videos suggested by AI/Cloud Function
 }
 
 export interface Course {
@@ -38,4 +51,7 @@ export interface Course {
   category?: string;
   difficulty?: DifficultyLevel;
   modules: CourseModule[];
+  price?: number; // Optional: Price of the course
+  currency?: string; // Optional: Currency for the price (e.g., "INR", "USD")
 }
+

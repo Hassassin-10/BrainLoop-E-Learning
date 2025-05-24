@@ -7,19 +7,30 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, User, Mail, Award, BookOpen, Edit3, ShieldCheck, Briefcase, History } from 'lucide-react';
+import { Switch } from '@/components/ui/switch'; // Added Switch
+import { Label } from '@/components/ui/label';   // Added Label
+import { Loader2, User, Mail, Award, BookOpen, Edit3, ShieldCheck, Briefcase, History, Smile } from 'lucide-react'; // Added Smile
 import Link from 'next/link';
 import { mockCourses } from '@/data/mockCourses';
 import { format } from 'date-fns';
 import type { Timestamp } from 'firebase/firestore';
+import { updateUserMoodSettings } from '@/services/moodService'; // Added mood service
+import { useToast } from '@/hooks/use-toast'; // Added useToast
 
 export default function ProfilePage() {
-  const { studentProfile, firebaseUser, isLoading: authLoading, isAuthenticated } = useAuth();
+  const { studentProfile, firebaseUser, isLoading: authLoading, isAuthenticated, refreshStudentProfile } = useAuth();
   const [mounted, setMounted] = useState(false);
+  const { toast } = useToast();
+  const [disableMoodCheck, setDisableMoodCheck] = useState(false);
+  const [isSavingMoodSettings, setIsSavingMoodSettings] = useState(false);
+
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    if (studentProfile?.moodSettings) {
+      setDisableMoodCheck(studentProfile.moodSettings.disableMoodCheck || false);
+    }
+  }, [studentProfile]);
 
   const getCourseNameById = (courseId: string) => {
     const course = mockCourses.find(c => c.id === courseId);
@@ -29,8 +40,26 @@ export default function ProfilePage() {
   const formatQuizTimestamp = (timestamp: Timestamp | Date | undefined): string => {
     if (!timestamp) return 'Date N/A';
     const date = timestamp instanceof Date ? timestamp : (timestamp && 'toDate' in timestamp ? timestamp.toDate() : new Date(0));
-    if (date.getTime() === 0) return 'Date N/A'; // Invalid date check
+    if (date.getTime() === 0) return 'Date N/A'; 
     return format(date, 'PPp');
+  };
+
+  const handleMoodCheckToggle = async (checked: boolean) => {
+    if (!firebaseUser?.uid) return;
+    setIsSavingMoodSettings(true);
+    setDisableMoodCheck(checked);
+    try {
+      await updateUserMoodSettings(firebaseUser.uid, { disableMoodCheck: checked });
+      toast({ title: 'Settings Saved', description: `Mood check before modules is now ${checked ? 'disabled' : 'enabled'}.` });
+      await refreshStudentProfile(); // Refresh context to reflect new settings
+    } catch (error) {
+      console.error("Error updating mood settings:", error);
+      toast({ title: 'Error', description: 'Could not save mood check settings.', variant: 'destructive' });
+      // Revert UI on error
+      setDisableMoodCheck(!checked); 
+    } finally {
+      setIsSavingMoodSettings(false);
+    }
   };
 
 
@@ -84,7 +113,7 @@ export default function ProfilePage() {
               <CardTitle className="text-xl flex items-center text-primary"><User className="mr-2 h-5 w-5" /> Personal Details</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <p><strong>Student ID:</strong> <Badge variant="secondary">{studentProfile.studentId}</Badge></p>
+              <div className="flex items-center"><strong>Student ID:</strong><Badge variant="secondary" className="ml-2">{studentProfile.studentId}</Badge></div>
               <p><strong>Email:</strong> {studentProfile.email}</p>
               <p><strong>Joined BrainLoop:</strong> {studentProfile.createdAt ? format(studentProfile.createdAt.toDate(), 'MMMM d, yyyy') : 'N/A'}</p>
               <p><strong>Last Active:</strong> {studentProfile.lastLogin ? format(studentProfile.lastLogin.toDate(), 'MMMM d, yyyy, p') : 'N/A'}</p>
@@ -100,8 +129,22 @@ export default function ProfilePage() {
             <CardHeader>
               <CardTitle className="text-xl flex items-center text-primary"><Briefcase className="mr-2 h-5 w-5" /> Account Settings</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
-                <p className="text-sm text-muted-foreground mb-3">Manage your account preferences (placeholders).</p>
+            <CardContent className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="mood-check-toggle"
+                    checked={!disableMoodCheck} // UI shows "Enable", so check is !disableMoodCheck
+                    onCheckedChange={(checked) => handleMoodCheckToggle(!checked)}
+                    disabled={isSavingMoodSettings}
+                  />
+                  <Label htmlFor="mood-check-toggle" className="cursor-pointer">
+                    Enable Mood Check Before Modules
+                  </Label>
+                  {isSavingMoodSettings && <Loader2 className="h-4 w-4 animate-spin text-primary"/>}
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  If enabled, you'll be asked about your mood before starting a module.
+                </p>
                 <Button variant="outline" className="w-full justify-start text-muted-foreground" disabled>Change Password</Button>
                 <Button variant="outline" className="w-full justify-start text-muted-foreground" disabled>Notification Preferences</Button>
                 <Button variant="destructive" className="w-full justify-start" disabled>Delete Account</Button>
@@ -145,10 +188,10 @@ export default function ProfilePage() {
             <CardContent>
               {studentProfile.quizzesAttempted && studentProfile.quizzesAttempted.length > 0 ? (
                 <ul className="space-y-3 max-h-60 overflow-y-auto pr-2">
-                  {studentProfile.quizzesAttempted.slice(-5).reverse().map((quiz, index) => ( // Show last 5 attempts, newest first
+                  {studentProfile.quizzesAttempted.slice(-5).reverse().map((quiz, index) => ( 
                     <li key={quiz.quizId + index} className="p-3 border rounded-md bg-secondary/30">
                       <div className="flex justify-between items-center">
-                        <span className="font-medium">{quiz.quizId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span> {/* Prettify quizId */}
+                        <span className="font-medium">{quiz.quizId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
                         <Badge 
                           variant={quiz.score >= 70 ? "default" : "destructive"}
                           className={`${quiz.score >= 70 ? "bg-green-500 dark:bg-green-600 text-white dark:text-white" : ""}`}
@@ -177,4 +220,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-

@@ -8,41 +8,50 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { staticQuizQuestions, quizCategories, quizNumOfQuestionsOptions, DEFAULT_QUIZ_TIME_LIMIT } from '@/data/staticQuizData';
 import type { StaticQuizQuestion } from '@/types/staticQuiz';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowRight, CheckCircle, HelpCircle, Hourglass, Loader2, RefreshCw, Settings, Sparkles, Timer, XCircle, ShieldAlert } from 'lucide-react';
+import { ArrowRight, CheckCircle, HelpCircle, Hourglass, Loader2, RefreshCw, Settings, Sparkles, Timer, XCircle, ShieldAlert, Trophy, BarChart3 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { submitQuizAttempt } from '@/services/quizService';
+import { submitQuizAttempt, getLeaderboardData, type LeaderboardEntry } from '@/services/quizService';
 import type { UserAnswer as UserAttemptAnswer } from '@/types/quiz';
+import { useRouter } from 'next/navigation';
 
 
 type QuizMode = 'config' | 'quiz' | 'result' | 'auth_required';
 
 export default function StaticQuizPage() {
-  const { studentId, isAuthenticated, isLoading: authIsLoading } = useAuth();
-  const [mode, setMode] = useState<QuizMode>(authIsLoading ? 'config' : (isAuthenticated ? 'config' : 'auth_required')); // Initial mode
+  const { studentId, firebaseUser, isAuthenticated, isLoading: authIsLoading, studentProfile } = useAuth();
+  const router = useRouter();
+  const [mode, setMode] = useState<QuizMode>(authIsLoading ? 'config' : (isAuthenticated ? 'config' : 'auth_required'));
   const [selectedCategory, setSelectedCategory] = useState<string>(quizCategories[0]);
   const [selectedNumQuestions, setSelectedNumQuestions] = useState<number>(quizNumOfQuestionsOptions[1]);
-  
+
   const [currentQuestion, setCurrentQuestion] = useState<StaticQuizQuestion | null>(null);
   const [questionPool, setQuestionPool] = useState<StaticQuizQuestion[]>([]);
   const [askedQuestionIndices, setAskedQuestionIndices] = useState<number[]>([]);
-  const [currentQuestionDisplayIndex, setCurrentQuestionDisplayIndex] = useState(0); 
-  
+  const [currentQuestionDisplayIndex, setCurrentQuestionDisplayIndex] = useState(0);
+
   const [userSelectedOptionIndex, setUserSelectedOptionIndex] = useState<number | null>(null);
   const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
   const [isSelectionDisabled, setIsSelectionDisabled] = useState(false);
-  
+
   const [timeLeft, setTimeLeft] = useState(DEFAULT_QUIZ_TIME_LIMIT);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  
+
   const [isSubmittingResult, setIsSubmittingResult] = useState(false);
   const { toast } = useToast();
 
   const [quizAnswers, setQuizAnswers] = useState<UserAttemptAnswer[]>([]);
   const [quizStartTime, setQuizStartTime] = useState<number | null>(null);
   const [mounted, setMounted] = useState(false);
+
+  // Leaderboard states
+  const [leaderboardCategory, setLeaderboardCategory] = useState<string>(quizCategories[0]);
+  const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
+  const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -52,9 +61,15 @@ export default function StaticQuizPage() {
     if (!authIsLoading && !isAuthenticated) {
       setMode('auth_required');
     } else if (!authIsLoading && isAuthenticated && mode === 'auth_required') {
-      setMode('config'); // User logged in, switch to config
+      setMode('config');
     }
   }, [isAuthenticated, authIsLoading, mode]);
+
+  useEffect(() => {
+    if (mode === 'config' || mode === 'result') { // Fetch leaderboard when on config or result screen
+      fetchLeaderboard();
+    }
+  }, [leaderboardCategory, mode]);
 
 
   const resetTimer = useCallback(() => {
@@ -70,8 +85,8 @@ export default function StaticQuizPage() {
           clearInterval(timerRef.current!);
           setIsSelectionDisabled(true);
           toast({ title: "Time's up!", description: "Moving to next question or showing result.", variant: "default" });
-          highlightCorrectAnswer(); // Show correct answer when time is up
-          if(nextQuestionBtnRef.current) nextQuestionBtnRef.current.focus(); // Focus next button
+          highlightCorrectAnswer();
+          if(nextQuestionBtnRef.current) nextQuestionBtnRef.current.focus();
           return 0;
         }
         return prevTime - 1;
@@ -81,17 +96,57 @@ export default function StaticQuizPage() {
 
   const nextQuestionBtnRef = useRef<HTMLButtonElement>(null);
 
+  const submitAttempt = useCallback(async () => {
+    if (!firebaseUser?.uid || !quizStartTime) {
+        toast({ title: "Info", description: "Quiz results not saved as user is not fully identified or quiz did not start properly.", variant: "default"});
+        return;
+    }
+    setIsSubmittingResult(true);
+    const durationSeconds = Math.floor((Date.now() - quizStartTime) / 1000);
+
+    const questionsForSubmission = questionPool
+      .filter((_, idx) => askedQuestionIndices.slice(0, selectedNumQuestions).includes(idx))
+      .map((q, i) => ({
+        id: q.question,
+        questionText: q.question,
+        options: q.options.map((optText, optIdx) => ({ id: `${q.question}-opt${optIdx}`, text: optText })),
+        correctOptionId: `${q.question}-opt${q.correctAnswer}`,
+        explanation: ""
+    }));
+
+
+    try {
+        const quizAttemptId = `${selectedCategory.toLowerCase().replace(/\s+/g, '-')}-${selectedNumQuestions}`;
+        await submitQuizAttempt(
+            quizAttemptId,
+            `${selectedCategory} Quiz (${selectedNumQuestions} questions)`,
+            firebaseUser.uid,
+            studentProfile?.name || null,
+            quizAnswers,
+            questionsForSubmission.slice(0, selectedNumQuestions),
+            durationSeconds
+        );
+        toast({ title: "Success", description: "Quiz results submitted." });
+        fetchLeaderboard(); // Refresh leaderboard after submitting
+    } catch (error) {
+        console.error("Failed to submit quiz attempt:", error);
+        toast({ title: "Error", description: `Failed to save quiz results: ${(error as Error).message}`, variant: "destructive" });
+    } finally {
+        setIsSubmittingResult(false);
+    }
+  }, [firebaseUser, quizStartTime, questionPool, askedQuestionIndices, selectedNumQuestions, selectedCategory, quizAnswers, toast, studentProfile?.name]);
+
 
   const loadRandomQuestion = useCallback(() => {
     if (askedQuestionIndices.length >= Math.min(selectedNumQuestions, questionPool.length)) {
-      setMode('result'); 
-      submitAttempt(); // Submit when all configured questions are asked
+      setMode('result');
+      submitAttempt();
       return null;
     }
 
     let randomIndex;
     let questionCandidate;
-    
+
     if (questionPool.length <= 0) {
         toast({title: "No questions", description: `No questions found for category ${selectedCategory}`, variant: "destructive"});
         setMode('config');
@@ -102,17 +157,17 @@ export default function StaticQuizPage() {
       randomIndex = Math.floor(Math.random() * questionPool.length);
       questionCandidate = questionPool[randomIndex];
     } while (askedQuestionIndices.includes(randomIndex) && askedQuestionIndices.length < questionPool.length);
-    
+
     if (askedQuestionIndices.length >= questionPool.length && questionPool.length < selectedNumQuestions) {
         setMode('result');
-        submitAttempt(); // Submit if pool exhausted before selectedNumQuestions
+        submitAttempt();
         return null;
     }
-    
+
     setAskedQuestionIndices(prev => [...prev, randomIndex]);
     setCurrentQuestionDisplayIndex(prev => prev + 1);
     return questionCandidate;
-  }, [askedQuestionIndices, selectedNumQuestions, questionPool, toast, selectedCategory]); // Removed submitAttempt from deps
+  }, [askedQuestionIndices, selectedNumQuestions, questionPool, toast, selectedCategory, submitAttempt]);
 
 
   const handleStartQuiz = () => {
@@ -126,35 +181,35 @@ export default function StaticQuizPage() {
       toast({ title: "Error", description: `No questions available for category: ${selectedCategory}`, variant: "destructive" });
       return;
     }
-    
+
     let actualNumQuestions = selectedNumQuestions;
     if (selectedNumQuestions > categoryData.questions.length) {
         toast({ title: "Note", description: `Selected category has only ${categoryData.questions.length} questions. Quiz will have ${categoryData.questions.length} questions.`, variant: "default" });
-        actualNumQuestions = categoryData.questions.length; // Adjust to max available
+        actualNumQuestions = categoryData.questions.length;
     }
 
 
     setQuestionPool(categoryData.questions);
-    setSelectedNumQuestions(actualNumQuestions); // Update state if adjusted
+    setSelectedNumQuestions(actualNumQuestions);
     setCorrectAnswersCount(0);
     setAskedQuestionIndices([]);
     setCurrentQuestionDisplayIndex(0);
     setQuizAnswers([]);
     setQuizStartTime(Date.now());
 
-    const firstQuestion = loadRandomQuestion(); 
+    const firstQuestion = loadRandomQuestion();
     if (firstQuestion) {
       setCurrentQuestion(firstQuestion);
       setMode('quiz');
       setIsSelectionDisabled(false);
       setUserSelectedOptionIndex(null);
       startTimer();
-    } else if(categoryData.questions.length > 0) { 
+    } else if(categoryData.questions.length > 0) {
        toast({title: "Error", description: "Could not load the first question.", variant: "destructive" });
        setMode('config');
     }
   };
-  
+
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -167,14 +222,14 @@ export default function StaticQuizPage() {
     }
   }, [mode]);
 
-  const highlightCorrectAnswer = () => { // Defined highlightCorrectAnswer
-    if (!currentQuestion || userSelectedOptionIndex === null) return; // Ensure currentQuestion and selection exist
+  const highlightCorrectAnswer = () => {
+    if (!currentQuestion || userSelectedOptionIndex === null) return;
     const correctOptionElement = answerOptionsRef.current?.children[currentQuestion.correctAnswer] as HTMLLabelElement | undefined;
-    if (correctOptionElement && userSelectedOptionIndex !== currentQuestion.correctAnswer) { // Only highlight if user was wrong
+    if (correctOptionElement && userSelectedOptionIndex !== currentQuestion.correctAnswer) {
         correctOptionElement.classList.add("correct-missed", "border-green-500", "bg-green-500/10");
     }
   };
-  const answerOptionsRef = useRef<HTMLDivElement>(null); // Ref for RadioGroup
+  const answerOptionsRef = useRef<HTMLDivElement>(null);
 
 
   const handleOptionSelect = (optionIndex: number) => {
@@ -188,17 +243,17 @@ export default function StaticQuizPage() {
     if (isCorrect) {
       setCorrectAnswersCount(prev => prev + 1);
     } else {
-      highlightCorrectAnswer(); // Highlight correct if user chose wrong
+      highlightCorrectAnswer();
     }
 
     setQuizAnswers(prev => [...prev, {
-      questionId: currentQuestion.question, 
-      selectedOptionId: currentQuestion.options[optionIndex] 
+      questionId: currentQuestion.question,
+      selectedOptionId: currentQuestion.options[optionIndex]
     }]);
   };
 
   const handleNextQuestion = () => {
-    if (!currentQuestion) return; 
+    if (!currentQuestion) return;
 
     if (currentQuestionDisplayIndex >= selectedNumQuestions) {
       setMode('result');
@@ -218,43 +273,6 @@ export default function StaticQuizPage() {
     }
   };
 
-  const submitAttempt = useCallback(async () => { // Wrapped in useCallback
-    if (!studentId || !quizStartTime) {
-        toast({ title: "Info", description: "Quiz results not saved as user is not fully identified or quiz did not start properly.", variant: "default"});
-        return;
-    }
-    setIsSubmittingResult(true);
-    const durationSeconds = Math.floor((Date.now() - quizStartTime) / 1000);
-    
-    const questionsForSubmission = questionPool
-      .filter((_, idx) => askedQuestionIndices.slice(0, selectedNumQuestions).includes(idx)) 
-      .map((q, i) => ({
-        id: q.question, 
-        questionText: q.question,
-        options: q.options.map((optText, optIdx) => ({ id: `${q.question}-opt${optIdx}`, text: optText })),
-        correctOptionId: `${q.question}-opt${q.correctAnswer}`,
-        explanation: "" 
-    }));
-
-
-    try {
-        await submitQuizAttempt(
-            selectedCategory.toLowerCase().replace(/\s+/g, '-') + `-${selectedNumQuestions}`, 
-            `${selectedCategory} Quiz (${selectedNumQuestions} questions)`,
-            studentId,
-            quizAnswers,
-            questionsForSubmission.slice(0, selectedNumQuestions), 
-            durationSeconds
-        );
-        toast({ title: "Success", description: "Quiz results submitted." });
-    } catch (error) {
-        console.error("Failed to submit quiz attempt:", error);
-        toast({ title: "Error", description: "Failed to save quiz results.", variant: "destructive" });
-    } finally {
-        setIsSubmittingResult(false);
-    }
-  }, [studentId, quizStartTime, questionPool, askedQuestionIndices, selectedNumQuestions, selectedCategory, quizAnswers, toast]);
-
 
   const handleTryAgain = () => {
     setMode('config');
@@ -269,7 +287,22 @@ export default function StaticQuizPage() {
     setQuizAnswers([]);
     setQuizStartTime(null);
   };
-  
+
+  const fetchLeaderboard = useCallback(async () => {
+    if (!leaderboardCategory) return;
+    setIsLoadingLeaderboard(true);
+    try {
+      const data = await getLeaderboardData(leaderboardCategory);
+      setLeaderboardData(data);
+    } catch (error) {
+      console.error("Failed to fetch leaderboard:", error);
+      toast({ title: "Error", description: "Could not load leaderboard.", variant: "destructive" });
+    } finally {
+      setIsLoadingLeaderboard(false);
+    }
+  }, [leaderboardCategory, toast]);
+
+
   if (!mounted || authIsLoading) {
      return (
       <div className="flex justify-center items-center h-screen">
@@ -304,8 +337,8 @@ export default function StaticQuizPage() {
 
   if (mode === 'config') {
     return (
-      <div className="container mx-auto py-8 flex justify-center">
-        <Card className="w-full max-w-lg shadow-xl">
+      <div className="container mx-auto py-8 space-y-8">
+        <Card className="w-full max-w-lg mx-auto shadow-xl">
           <CardHeader>
             <CardTitle className="text-2xl font-bold text-primary flex items-center">
               <Settings className="mr-2 h-6 w-6" /> Quiz Configuration
@@ -321,9 +354,9 @@ export default function StaticQuizPage() {
                     key={category}
                     variant={selectedCategory === category ? 'default' : 'outline'}
                     onClick={() => setSelectedCategory(category)}
-                    className="w-full"
+                    className="w-full capitalize"
                   >
-                    {category.charAt(0).toUpperCase() + category.slice(1)}
+                    {category}
                   </Button>
                 ))}
               </div>
@@ -349,6 +382,12 @@ export default function StaticQuizPage() {
             </Button>
           </CardFooter>
         </Card>
+        <LeaderboardSection
+          category={leaderboardCategory}
+          onCategoryChange={setLeaderboardCategory}
+          data={leaderboardData}
+          isLoading={isLoadingLeaderboard}
+        />
       </div>
     );
   }
@@ -360,7 +399,7 @@ export default function StaticQuizPage() {
         <Card className="w-full max-w-2xl shadow-xl">
           <CardHeader>
             <div className="flex justify-between items-center">
-              <CardTitle className="text-2xl font-bold text-primary flex items-center">
+              <CardTitle className="text-2xl font-bold text-primary flex items-center capitalize">
                 <HelpCircle className="mr-2 h-6 w-6" /> {selectedCategory} Quiz
               </CardTitle>
               <div className={`flex items-center p-2 rounded-md text-lg font-semibold ${timeLeft <=5 ? 'bg-destructive text-destructive-foreground' : 'bg-secondary text-secondary-foreground'}`}>
@@ -399,13 +438,13 @@ export default function StaticQuizPage() {
                     } else if (isIncorrectUserChoice) {
                         itemClass = "border-red-500 bg-red-500/20 text-red-700 dark:text-red-400";
                         IconComponent = <XCircle className="h-5 w-5 text-red-500" />;
-                    } else if (isActualCorrect) { // Highlight correct answer if user chose incorrectly
+                    } else if (isActualCorrect) {
                          itemClass = "border-green-500 bg-green-500/10 text-green-600 dark:text-green-500";
-                         if(userSelectedOptionIndex !== currentQuestion.correctAnswer) { // Only show check if user didn't pick it AND it's the correct one
+                         if(userSelectedOptionIndex !== currentQuestion.correctAnswer) {
                             IconComponent = <CheckCircle className="h-5 w-5 text-green-500 opacity-70" />;
                          }
                     } else {
-                        itemClass = "opacity-70"; // For non-selected, non-correct options after selection
+                        itemClass = "opacity-70";
                     }
                 }
 
@@ -438,8 +477,8 @@ export default function StaticQuizPage() {
 
   if (mode === 'result') {
     return (
-      <div className="container mx-auto py-8 flex justify-center">
-        <Card className="w-full max-w-md text-center shadow-xl">
+      <div className="container mx-auto py-8 space-y-8">
+        <Card className="w-full max-w-md mx-auto text-center shadow-xl">
           <CardHeader>
             <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit">
                 <Sparkles className="h-12 w-12 text-primary" />
@@ -447,11 +486,11 @@ export default function StaticQuizPage() {
             <CardTitle className="text-3xl font-bold text-primary mt-4">Quiz Completed!</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Image 
+            <Image
                 src={`https://picsum.photos/seed/quizcomplete${Date.now()}/300/200`}
-                alt="Quiz completed" 
-                width={300} 
-                height={200} 
+                alt="Quiz completed"
+                width={300}
+                height={200}
                 className="mx-auto rounded-lg shadow-md"
                 data-ai-hint="quiz celebration"
             />
@@ -469,6 +508,12 @@ export default function StaticQuizPage() {
             </Button>
           </CardFooter>
         </Card>
+        <LeaderboardSection
+          category={leaderboardCategory}
+          onCategoryChange={setLeaderboardCategory}
+          data={leaderboardData}
+          isLoading={isLoadingLeaderboard}
+        />
       </div>
     );
   }
@@ -478,5 +523,79 @@ export default function StaticQuizPage() {
       <Loader2 className="h-12 w-12 animate-spin text-primary" />
       <p className="ml-4 text-lg text-muted-foreground">Loading Quiz Interface...</p>
     </div>
+  );
+}
+
+interface LeaderboardSectionProps {
+  category: string;
+  onCategoryChange: (category: string) => void;
+  data: LeaderboardEntry[];
+  isLoading: boolean;
+}
+
+function LeaderboardSection({ category, onCategoryChange, data, isLoading }: LeaderboardSectionProps) {
+  return (
+    <Card className="shadow-xl">
+      <CardHeader>
+        <CardTitle className="text-2xl font-bold text-primary flex items-center">
+          <Trophy className="mr-2 h-6 w-6 text-yellow-500" /> Quiz Leaderboard
+        </CardTitle>
+        <CardDescription>See who's topping the charts in different quiz categories.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <Label htmlFor="leaderboardCategory" className="text-md font-medium">Select Category for Leaderboard</Label>
+          <Select value={category} onValueChange={onCategoryChange}>
+            <SelectTrigger id="leaderboardCategory" className="mt-1 bg-background">
+              <SelectValue placeholder="Select a category" />
+            </SelectTrigger>
+            <SelectContent>
+              {quizCategories.map(cat => (
+                <SelectItem key={cat} value={cat} className="capitalize">{cat}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {isLoading && (
+          <div className="flex justify-center items-center p-8">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        )}
+
+        {!isLoading && data.length === 0 && (
+          <p className="text-center text-muted-foreground py-4">No leaderboard data available for {category}. Be the first to set a score!</p>
+        )}
+
+        {!isLoading && data.length > 0 && (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[50px]">Rank</TableHead>
+                  <TableHead>Student</TableHead>
+                  <TableHead className="text-right">High Score</TableHead>
+                  <TableHead className="text-right">Attempts</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.map((entry) => (
+                  <TableRow key={entry.studentId} className={entry.studentId === useAuth().studentId ? 'bg-accent/20' : ''}>
+                    <TableCell className="font-medium">{entry.rank}</TableCell>
+                    <TableCell>{entry.studentName}</TableCell>
+                    <TableCell className="text-right font-semibold text-primary">{entry.highScore.toFixed(0)}%</TableCell>
+                    <TableCell className="text-right">{entry.attempts}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+      <CardFooter className="text-sm text-muted-foreground">
+        <BarChart3 className="mr-2 h-4 w-4" />
+        Leaderboard shows top scores for the selected category. Keep practicing!
+      </CardFooter>
+    </Card>
   );
 }

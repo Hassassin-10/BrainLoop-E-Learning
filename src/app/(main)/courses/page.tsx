@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { mockCourses, learningStyleIcons } from '@/data/mockCourses';
 import type { Course } from '@/types/course';
 import { ArrowRight, Library, Loader2 } from 'lucide-react';
+import PaymentButton from '@/components/payment-button'; // Import PaymentButton
 
 export default function CoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
@@ -65,20 +66,28 @@ export default function CoursesPage() {
                 </div>
                 <CardHeader>
                   <CardTitle className="text-xl text-primary">{course.name}</CardTitle>
-                  <div className="flex gap-2 mt-1">
+                  <div className="flex gap-2 mt-1 flex-wrap">
                     {course.category && <Badge variant="secondary">{course.category}</Badge>}
                     {course.difficulty && <Badge variant="outline">{course.difficulty}</Badge>}
+                    {course.price && course.currency && (
+                      <Badge variant="default" className="bg-green-600 text-white dark:bg-green-500 dark:text-black">
+                        {course.currency} {course.price}
+                      </Badge>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="flex-grow">
                   <CardDescription>{course.description.substring(0, 120)}{course.description.length > 120 ? '...' : ''}</CardDescription>
                 </CardContent>
-                <CardFooter>
+                <CardFooter className="flex-col space-y-2">
                   <Button asChild className="w-full bg-accent text-accent-foreground hover:bg-accent/90">
                     <Link href={`/courses/${course.id}`}>
                       View Modules <ArrowRight className="ml-2 h-4 w-4" />
                     </Link>
                   </Button>
+                  {course.price && course.currency && (
+                    <PaymentButton course={course} />
+                  )}
                 </CardFooter>
               </Card>
             );
